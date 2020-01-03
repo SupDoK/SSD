@@ -1,5 +1,6 @@
 import javax.crypto.*;
 import javax.crypto.spec.IvParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
 import java.io.*;
 import java.security.*;
 import java.security.cert.CertificateException;
@@ -67,7 +68,7 @@ public class SSDProjectV1 {
         PublicKey publicKey;
         PrivateKey privateKey;
 
-        KeyPairGenerator PrivkeyGen = null;
+        KeyPairGenerator PrivkeyGen;
 
         PrivkeyGen = KeyPairGenerator.getInstance("RSA");
         PrivkeyGen.initialize(4096);
@@ -104,11 +105,16 @@ public class SSDProjectV1 {
 
             //TimedObject toSend3 = new TimedObject(dateobj , sign(hello , privateKey) );
 
-            oout.writeObject(hello);
+            //MESSAGE 1
+            oout.writeObject(hello+":"+sign(hello , privateKey));
+            //MESSAGE 2
             oout.writeObject(publicKey);
-            oout.writeObject( sign(hello , privateKey));
+            //oout.writeObject( sign(hello , privateKey));
+
+
 
             //Verify certificate !
+            //MESSAGE 3
             X509Certificate cert = (X509Certificate)iin.readObject();
             if(!cert.getIssuerDN().getName().equals("EMAILADDRESS=alphatangototo789@gmail.com, CN=SSD, OU=SSD, O=Crochez ssd, L=Bruxelles, ST=Bruxelles, C=BE")){
                 throw  new CertificateException();
@@ -120,69 +126,59 @@ public class SSDProjectV1 {
 
             System.out.println(cert.getPublicKey());
 
-            //AES key generator
+            //MESSAGE 4
+            //Get encrypted AES key
+            String signedEncAESKey = (String)iin.readObject();
+            String encAESKey = signedEncAESKey.split("_")[0];
+            String signature = signedEncAESKey.split("_")[1];
 
-            KeyGenerator keyGen = KeyGenerator.getInstance("AES");
-            keyGen.init(256); // for example
-            SecretKey secretKey = keyGen.generateKey();
-
-            /*
-            //Encrypt data with AES
-            Cipher cipherAlpha = Cipher.getInstance("AES/CBC/PKCS7PADDING");
-            //Check if IF is good and secure
-            cipherAlpha.init(Cipher.ENCRYPT_MODE, secretKey, new IvParameterSpec(secretKey.getEncoded()));
-
-            byte[] encryptedWithAES = cipherAlpha.doFinal(user.toString().getBytes());
-
-            String encodedString = Base64.getEncoder().encodeToString(encryptedWithAES, Base64.DEFAULT);
-            */
-            //Encrypt AES key with RSA
-            Cipher cipher = Cipher.getInstance("RSA/ECB/PKCS1Padding");
-            cipher.init(Cipher.ENCRYPT_MODE, cert.getPublicKey());
-            byte[] crypteedKey = cipher.doFinal(secretKey.getEncoded());
-
-            String cryptedkeyString = Base64.getEncoder().encodeToString(crypteedKey);
-
-            //Ajout de la date
-            Date currentDate = new Date();
-            cryptedkeyString += ":"+df.format(currentDate);
-
-            System.out.println(cryptedkeyString);
-
-            oout.writeObject(cryptedkeyString);
-
-            byte[] ivSpec = (byte[])iin.readObject();
-            String encodedString = (String)iin.readObject();
-            String signature = (String)iin.readObject();
-
-            System.out.println(encodedString);
-
-            boolean banswer = verify(encodedString , signature , cert.getPublicKey());
+            boolean banswer = verify(encAESKey , signature , cert.getPublicKey());
             System.out.println(banswer);
             if(!banswer){
                 //TODO
             }
 
-            String decripted = decryptData(encodedString,secretKey,new IvParameterSpec(ivSpec));
-            System.out.println(decripted);
+            //Check date
+            boolean ok = checkDates(encAESKey.split(":")[1]);
+            System.out.println(ok);
+            if(!ok){
+                //TODO
+            }
 
-            //TODO Generate random IV
-             SecureRandom random = new SecureRandom();
-            byte[] ivSpec2 =  new byte[16];
 
-            random.nextBytes(ivSpec2);
-            String messageToSend = encryptData(mail+":"+hashedPWD,secretKey,new IvParameterSpec(ivSpec2));
+            System.out.println(encAESKey.split(":")[0]);
+            //Decipher AES key !
+            Cipher cipher2c = Cipher.getInstance("RSA/ECB/PKCS1Padding");
+            cipher2c.init(Cipher.DECRYPT_MODE, privateKey);
+            SecretKeySpec AESKey = new SecretKeySpec(cipher2c.doFinal(Base64.getDecoder().decode(encAESKey.split(":")[0])), "AES");
 
-            oout.writeObject(ivSpec2);
+
+            //Send client secure handshake
+            String messageToSend = prepareSend("Client Secure Handshake",AESKey , privateKey);
+            //MESSAGE 6
             oout.writeObject(messageToSend);
-            //oout.flush();
+
+            //Receive Server secure handshake
+            //MESSAGE 7
+            //byte[] ivSpec = (byte[])iin.readObject();
+            //MESSAGE 8
+            String signedEncString = (String)iin.readObject();
+            String messageReceived = prepareReceive(signedEncString , AESKey , cert.getPublicKey());
+            System.out.println(messageReceived);
 
 
-            String object = (String)iin.readObject();
+            //Send user credentials
+            String messageToSend2 = prepareSend(mail+"-"+hashedPWD,AESKey , privateKey);
+            //MESSAGE 9
+            oout.writeObject(messageToSend2);
 
-            System.out.println(object);
-            if(object.equals(mail+" as good credentials !")){
 
+            //MESSAGE 10
+            String signedEncString10 = (String)iin.readObject();
+            String messageReceived10 = prepareReceive(signedEncString10 , AESKey , cert.getPublicKey());
+
+            if(messageReceived10.equals(mail+" as good credentials !")){
+                System.out.println(messageReceived10);
                 System.out.println("We send you a mail to email your e-mail !");
 
 
@@ -192,8 +188,10 @@ public class SSDProjectV1 {
                     sc.reset();
 
                     //To change TODO
-                    oout.writeObject(""+ansMail);
-
+                    //Send user credentials
+                    String messageToSend3 = prepareSend(""+ansMail,AESKey , privateKey);
+                    //MESSAGE 11
+                    oout.writeObject(messageToSend3);
 
                     String[] answer = ((String)iin.readObject()).split(":");
 
@@ -289,7 +287,7 @@ public class SSDProjectV1 {
 
 
             }else{
-                System.out.println(object);
+                System.out.println(messageReceived10);
             }
 
             //dout.close();
@@ -325,8 +323,81 @@ public class SSDProjectV1 {
 
     }
 
+    private String prepareSend(String data, SecretKeySpec AESKey, PrivateKey privateKey) throws Exception {
+
+        //TODO Generate random IV
+        SecureRandom random = new SecureRandom();
+        byte[] ivSpec0 =  new byte[16];
+
+        random.nextBytes(ivSpec0);
+        String message5 = encryptData(data,AESKey,new IvParameterSpec(ivSpec0));
+        String messageToSend = Base64.getEncoder().encodeToString(ivSpec0)+":"+timeMessage(message5);
+
+        return messageToSend+"_"+sign(messageToSend , privateKey);
+    }
+    private String prepareReceive(String signedEncString, SecretKeySpec AESKey, PublicKey publicKey) throws Exception {
+
+        String encMessage = signedEncString.split("_")[0];
+        String signature2 = signedEncString.split("_")[1];
+
+        boolean banswer0 = verify(encMessage , signature2 , publicKey);
+        System.out.println(banswer0);
+        if(!banswer0){
+            //TODO
+        }
+
+        //Check date
+        boolean ok0 = checkDates(encMessage.split(":")[2]);
+        System.out.println(ok0);
+        if(!ok0){
+            //TODO
+        }
+
+        //Decipher message
+        String decryptedMessage = decryptData(encMessage.split(":")[1] , AESKey ,new IvParameterSpec(Base64.getDecoder().decode(encMessage.split(":")[0])));
+
+        return decryptedMessage;
+    }
+
+    private boolean checkDates(String date){
+
+        //DateFormat df = new SimpleDateFormat("yyyy-MM-dd-hh-mm-ss");
+
+        String[] splitted = date.split("-");
+
+        Calendar construct = Calendar.getInstance();
+
+        construct.set(Calendar.YEAR , Integer.parseInt(splitted[0]));
+        construct.set(Calendar.MONTH , Integer.parseInt(splitted[1]));
+        construct.set(Calendar.DAY_OF_MONTH , Integer.parseInt(splitted[2]));
+
+        construct.set(Calendar.HOUR , Integer.parseInt(splitted[3]));
+        construct.set(Calendar.MINUTE , Integer.parseInt(splitted[4]));
+        construct.set(Calendar.SECOND , Integer.parseInt(splitted[5]));
+
+        construct.add(Calendar.SECOND, 360);
+        Date toCompareplus5 = construct.getTime();
+        Date currentDate = new Date();
+
+        System.out.println(currentDate);
+        System.out.println(toCompareplus5);
+
+        if(toCompareplus5.after(currentDate)){
+            //TODO
+            return true;
+        }
+
+        return false;
+    }
+
+    private String timeMessage(String message){
+        DateFormat df = new SimpleDateFormat("yyyy-MM-dd-hh-mm-ss");
+        Date currentDate = new Date();
+        return message+":"+df.format(currentDate);
+    }
+
     //Based on https://www.developpez.net/forums/d1803792/java/general-java/signature-verification-rsa-java/
-    public static String sign(String plainText, PrivateKey privateKey) throws Exception {
+    private static String sign(String plainText, PrivateKey privateKey) throws Exception {
 
         Signature privateSignature = Signature.getInstance("SHA256withRSA");
         privateSignature.initSign(privateKey);
